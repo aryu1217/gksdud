@@ -396,7 +396,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     let status = NSTextField(wrappingLabelWithString: "")
     var timer: Timer?
     var menuInputTimer: Timer?
-    var inputIndicatorWatchGeneration = 0
     var observers: [NSObjectProtocol] = []
     var keyTap: CFMachPort?
     var keyTapSource: CFRunLoopSource?
@@ -465,7 +464,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         togglePressSwitch()
     }
     func stopKeyTap() {
-        inputIndicatorWatchGeneration += 1
         optionInput.cancel()
         cancelCapsRestore()
         englishCaps.reset()
@@ -511,7 +509,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                     || (type == .keyUp && !owner.engine.switchOnKeyDown && !owner.engine.longPressCapsLock)
                 if owner.engine.active && beginsSwitch && code == Int64(owner.engine.target.keyCode) {
                     owner.rememberCapsBeforeSwitch()
-                    owner.watchInputSourceChange()
                 }
                 if owner.longPress.key == code {
                     if type == .keyUp { owner.finishLongPress(code: code) }
@@ -673,7 +670,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if language(current).hasPrefix("en") { completeCapsTransition(); return }
         // Keep composition on the native shortcut path; no text replay or direct TIS selection.
         guard let event = longPressEvent, let pulse = nativeSwitchPulse(from: event, marker: nativePulseMarker) else { cancelLongPress(); return }
-        watchInputSourceChange()
         pulse.0.post(tap: .cghidEventTap); pulse.1.post(tap: .cghidEventTap)
         let generation = longPressGeneration
         let timeout = DispatchWorkItem { [weak self] in
@@ -875,26 +871,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource] ?? []
         return list.first { language($0).hasPrefix(prefix) }
     }
-    func watchInputSourceChange() {
-        // The native shortcut can change the source before its notification arrives.
-        // Poll briefly for display only; never guess that a switch succeeded.
-        inputIndicatorWatchGeneration += 1
-        checkInputSourceChange(from: currentLanguage, generation: inputIndicatorWatchGeneration, remaining: 25)
-    }
-    func checkInputSourceChange(from previous: String, generation: Int, remaining: Int) {
-        guard generation == inputIndicatorWatchGeneration else { return }
-        if currentLanguage != previous { updateInputIndicator(); return }
-        guard remaining > 0 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
-            self?.checkInputSourceChange(from: previous, generation: generation, remaining: remaining - 1)
-        }
-    }
     @objc func inputSourceChanged() {
         RunLoop.main.perform(inModes: [.common]) { [weak self] in
             guard let self else { return }
             guard !self.optionInput.busy else { return }
             self.updateInputIndicator()
-            self.watchInputSourceChange()
             self.completeCapsTransition()
             self.scheduleCapsRestore()
             self.restoreEnglishCaps()
